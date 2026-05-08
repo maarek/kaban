@@ -1,13 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import {
   BoardService,
   type Config,
-  ConfigSchema,
   createDb,
   DEFAULT_CONFIG,
   initializeSchema,
 } from "@kaban-board/core";
 import { Command } from "commander";
+import { readConfig, writeConfig } from "../lib/config.js";
 import { getKabanPaths } from "../lib/context.js";
 
 export const initCommand = new Command("init")
@@ -31,7 +31,7 @@ export const initCommand = new Command("init")
     let config: Config;
 
     if (existsSync(configPath)) {
-      const parsed = ConfigSchema.parse(JSON.parse(readFileSync(configPath, "utf-8")));
+      const parsed = readConfig(configPath);
       config = {
         ...parsed,
         board: {
@@ -46,7 +46,7 @@ export const initCommand = new Command("init")
       };
     }
 
-    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    writeConfig(configPath, config);
 
     const db = await createDb(dbPath);
     await initializeSchema(db);

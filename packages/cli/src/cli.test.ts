@@ -178,6 +178,113 @@ describe("init command", () => {
   });
 });
 
+describe("columns command", () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    run("init --name 'Test Board'");
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  test("list shows default columns after fresh init", () => {
+    const { stdout, exitCode } = runCli(["columns", "list"]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("ID           Name         Tasks  Position  WIP Limit  Terminal");
+    expect(stdout).toContain("-----------  -----------  -----  --------  ---------  --------");
+    expect(stdout).toContain("Backlog");
+    expect(stdout).toContain("In Progress");
+    expect(stdout).toContain("Done");
+    expect(stdout).not.toContain("\t");
+  });
+
+  test("add creates DB column and updates config", () => {
+    const { stdout, exitCode } = runCli(["columns", "add", "qa", "QA"]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Added column");
+
+    const { stdout: listOut } = runCli(["columns", "list", "--json"]);
+    const response = JSON.parse(listOut);
+    const qaColumn = response.data.find((column: { id: string }) => column.id === "qa");
+    expect(qaColumn.name).toBe("QA");
+    expect(qaColumn.position).toBe(5);
+    expect(qaColumn.wipLimit).toBeNull();
+    expect(qaColumn.isTerminal).toBe(false);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.at(-1)).toEqual({ id: "qa", name: "QA" });
+  });
+
+  test("add with duplicate ID fails", () => {
+    runCli(["columns", "add", "qa", "QA"]);
+
+    const { stderr, exitCode } = runCli(["columns", "add", "qa", "QA Again"]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("already exists");
+  });
+
+  test("add --terminal marks terminal column", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "add",
+      "deployed",
+      "Deployed",
+      "--terminal",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data.isTerminal).toBe(true);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.at(-1).isTerminal).toBe(true);
+  });
+
+  test("add --wip-limit persists limit", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "add",
+      "qa",
+      "QA",
+      "--wip-limit",
+      "3",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data.wipLimit).toBe(3);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.at(-1).wipLimit).toBe(3);
+  });
+
+  test("list --json returns expected shape", () => {
+    const { stdout, exitCode } = runCli(["columns", "list", "--json"]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.success).toBe(true);
+    expect(response.data[0]).toEqual({
+      id: "backlog",
+      name: "Backlog",
+      taskCount: 0,
+      position: 0,
+      wipLimit: null,
+      isTerminal: false,
+    });
+  });
+});
+
 describe("assign command", () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });

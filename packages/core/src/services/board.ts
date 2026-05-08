@@ -1,8 +1,42 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { boards, columns } from "../db/schema.js";
 import type { DB } from "../db/types.js";
-import type { Board, Column, Config } from "../types.js";
+import { type Board, type Column, type Config, ExitCode, KabanError } from "../types.js";
+import { validateColumnId } from "../validation.js";
+
+export interface AddColumnInput {
+  id: string;
+  name: string;
+  wipLimit?: number;
+  isTerminal?: boolean;
+  position?: number;
+}
+
+function validateColumnName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new KabanError("Column name cannot be empty", ExitCode.VALIDATION);
+  }
+  if (trimmed.length > 50) {
+    throw new KabanError("Column name cannot exceed 50 characters", ExitCode.VALIDATION);
+  }
+  return trimmed;
+}
+
+function validateColumnPosition(position: number): number {
+  if (!Number.isInteger(position) || position < 0) {
+    throw new KabanError("Column position must be a non-negative integer", ExitCode.VALIDATION);
+  }
+  return position;
+}
+
+function validateWipLimit(wipLimit: number): number {
+  if (!Number.isInteger(wipLimit) || wipLimit <= 0) {
+    throw new KabanError("WIP limit must be a positive integer", ExitCode.VALIDATION);
+  }
+  return wipLimit;
+}
 
 export class BoardService {
   constructor(private db: DB) {}
@@ -46,6 +80,48 @@ export class BoardService {
 
   async getColumns(): Promise<Column[]> {
     return this.db.select().from(columns).orderBy(columns.position);
+  }
+
+  async addColumn(input: AddColumnInput): Promise<Column> {
+    const id = validateColumnId(input.id);
+    const name = validateColumnName(input.name);
+    const wipLimit = input.wipLimit === undefined ? undefined : validateWipLimit(input.wipLimit);
+
+    const board = await this.getBoard();
+    if (!board) {
+      throw new KabanError("No board found", ExitCode.NOT_FOUND);
+    }
+
+    const existing = await this.getColumn(id);
+    if (existing) {
+      throw new KabanError(`Column '${id}' already exists`, ExitCode.CONFLICT);
+    }
+
+    const maxPositionResult = await this.db
+      .select({ max: sql<number>`COALESCE(MAX(position), -1)` })
+      .from(columns)
+      .where(eq(columns.boardId, board.id));
+
+    const position =
+      input.position === undefined
+        ? (maxPositionResult[0]?.max ?? -1) + 1
+        : validateColumnPosition(input.position);
+
+    await this.db.insert(columns).values({
+      id,
+      boardId: board.id,
+      name,
+      position,
+      wipLimit: wipLimit ?? null,
+      isTerminal: input.isTerminal ?? false,
+    });
+
+    const column = await this.getColumn(id);
+    if (!column) {
+      throw new KabanError(`Column '${id}' was not created`, ExitCode.GENERAL_ERROR);
+    }
+
+    return column;
   }
 
   async getColumn(id: string): Promise<Column | null> {

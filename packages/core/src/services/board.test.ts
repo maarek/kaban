@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { createDb, type DB, initializeSchema } from "../db/index.js";
-import { DEFAULT_CONFIG } from "../types.js";
+import { DEFAULT_CONFIG, KabanError } from "../types.js";
 import { BoardService } from "./board.js";
 
 const TEST_DIR = ".kaban-test-board";
@@ -71,6 +71,46 @@ describe("BoardService", () => {
 
       expect(columns.length).toBeGreaterThan(0);
       expect(columns.every((c) => c.isTerminal)).toBe(true);
+    });
+  });
+
+  describe("addColumn", () => {
+    test("inserts column with next position", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      const column = await service.addColumn({ id: "qa", name: "QA" });
+
+      expect(column.id).toBe("qa");
+      expect(column.name).toBe("QA");
+      expect(column.position).toBe(5);
+      expect(column.wipLimit).toBeNull();
+      expect(column.isTerminal).toBe(false);
+    });
+
+    test("rejects duplicate IDs", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await expect(service.addColumn({ id: "todo", name: "Duplicate Todo" })).rejects.toThrow(
+        KabanError,
+      );
+    });
+
+    test("returns columns ordered by position after add", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await service.addColumn({ id: "qa", name: "QA", wipLimit: 3, isTerminal: true });
+      const columns = await service.getColumns();
+
+      expect(columns.map((column) => column.id)).toEqual([
+        "backlog",
+        "todo",
+        "in_progress",
+        "review",
+        "done",
+        "qa",
+      ]);
+      expect(columns[5].wipLimit).toBe(3);
+      expect(columns[5].isTerminal).toBe(true);
     });
   });
 });

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BoardService, type Config, createDb, type DB, TaskService } from "@kaban-board/core";
+import { readConfig } from "./config.js";
 
 export interface KabanContext {
   db: DB;
@@ -20,7 +21,7 @@ export async function getContext(): Promise<KabanContext> {
   }
 
   const db = await createDb(dbPath);
-  const config: Config = JSON.parse(readFileSync(configPath, "utf-8"));
+  const config: Config = readConfig(configPath);
   const boardService = new BoardService(db);
   const taskService = new TaskService(db, boardService);
 
