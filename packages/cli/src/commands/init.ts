@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   BoardService,
   type Config,
+  ConfigSchema,
   createDb,
   DEFAULT_CONFIG,
   initializeSchema,
@@ -22,10 +23,29 @@ export const initCommand = new Command("init")
 
     mkdirSync(kabanDir, { recursive: true });
 
-    const config: Config = {
-      ...DEFAULT_CONFIG,
-      board: { name: options.name },
-    };
+    const rawArgs = process.argv.slice(2);
+    const nameOverrideProvided = rawArgs.some(
+      (arg) => arg === "--name" || arg === "-n" || arg.startsWith("--name="),
+    );
+
+    let config: Config;
+
+    if (existsSync(configPath)) {
+      const parsed = ConfigSchema.parse(JSON.parse(readFileSync(configPath, "utf-8")));
+      config = {
+        ...parsed,
+        board: {
+          ...parsed.board,
+          name: nameOverrideProvided ? options.name : parsed.board.name,
+        },
+      };
+    } else {
+      config = {
+        ...DEFAULT_CONFIG,
+        board: { name: options.name },
+      };
+    }
+
     writeFileSync(configPath, JSON.stringify(config, null, 2));
 
     const db = await createDb(dbPath);
@@ -33,7 +53,7 @@ export const initCommand = new Command("init")
     const boardService = new BoardService(db);
     await boardService.initializeBoard(config);
 
-    console.log(`Initialized Kaban board: ${options.name}`);
+    console.log(`Initialized Kaban board: ${config.board.name}`);
     console.log(`  Database: ${dbPath}`);
     console.log(`  Config: ${configPath}`);
   });

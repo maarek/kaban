@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const TEST_DIR = "/tmp/kaban-cli-test";
@@ -87,6 +87,95 @@ describe("CLI Integration", () => {
      expect(doneTask.columnId).toBe("done");
      expect(doneTask.completedAt).not.toBeNull();
    });
+});
+
+describe("init command", () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(join(TEST_DIR, ".kaban"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  test("respects existing config.json custom columns", () => {
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          board: { name: "Custom Board" },
+          columns: [
+            { id: "todo", name: "Todo" },
+            { id: "qa", name: "QA" },
+            { id: "done", name: "Done", isTerminal: true },
+          ],
+          defaults: {
+            column: "todo",
+            agent: "user",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const initOutput = run("init");
+    expect(initOutput).toContain("Initialized Kaban board: Custom Board");
+
+    const statusOutput = run("status");
+    expect(statusOutput).toContain("Todo: 0");
+    expect(statusOutput).toContain("QA: 0");
+    expect(statusOutput).toContain("Done: 0 [done]");
+    expect(statusOutput).not.toContain("Backlog: 0");
+    expect(statusOutput).not.toContain("In Progress: 0");
+
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns).toHaveLength(3);
+    expect(savedConfig.columns[1].id).toBe("qa");
+  });
+
+  test("uses existing config but allows --name to override board name", () => {
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          board: { name: "Original Name" },
+          columns: [
+            { id: "todo", name: "Todo" },
+            { id: "done", name: "Done", isTerminal: true },
+          ],
+          defaults: {
+            column: "todo",
+            agent: "user",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const initOutput = run("init --name 'Renamed Board'");
+    expect(initOutput).toContain("Initialized Kaban board: Renamed Board");
+
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.board.name).toBe("Renamed Board");
+    expect(savedConfig.columns).toHaveLength(2);
+  });
+
+  test("fails when board database already exists", () => {
+    run("init --name 'First Board'");
+
+    const result = runCli(["init", "--name", "Second Board"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Board already exists in this directory");
+
+    const statusOutput = run("status");
+    expect(statusOutput).toContain("First Board");
+    expect(statusOutput).not.toContain("Second Board");
+  });
 });
 
 describe("assign command", () => {
