@@ -14,10 +14,24 @@ interface ColumnOutput {
 }
 
 interface AddColumnOptions {
+  after?: string;
+  before?: string;
   terminal?: boolean;
   wipLimit?: string;
   json?: boolean;
 }
+
+interface AddColumnConfigInput {
+  id: string;
+  name: string;
+  wipLimit?: number;
+  isTerminal: boolean;
+}
+
+type ColumnPlacement =
+  | { type: "append" }
+  | { type: "before"; targetId: string }
+  | { type: "after"; targetId: string };
 
 function toColumnOutput(column: Column): ColumnOutput {
   return {
@@ -74,30 +88,70 @@ function parseWipLimit(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function parsePlacement(options: AddColumnOptions): ColumnPlacement {
+  if (options.before && options.after) {
+    throw new KabanError("Use only one of --before or --after", ExitCode.VALIDATION);
+  }
+  if (options.before) {
+    return { type: "before", targetId: options.before };
+  }
+  if (options.after) {
+    return { type: "after", targetId: options.after };
+  }
+  return { type: "append" };
+}
+
+function getPlacementPosition(columns: Column[], placement: ColumnPlacement): number | undefined {
+  if (placement.type === "append") {
+    return undefined;
+  }
+
+  const target = columns.find((column) => column.id === placement.targetId);
+  if (!target) {
+    throw new KabanError(`Column '${placement.targetId}' does not exist`, ExitCode.VALIDATION);
+  }
+
+  return placement.type === "before" ? target.position : target.position + 1;
+}
+
+function createConfigColumn(input: AddColumnConfigInput) {
+  return {
+    id: input.id,
+    name: input.name.trim(),
+    ...(input.wipLimit === undefined ? {} : { wipLimit: input.wipLimit }),
+    ...(input.isTerminal ? { isTerminal: true } : {}),
+  };
+}
+
 function buildConfigWithColumn(
   config: Config,
-  input: {
-    id: string;
-    name: string;
-    wipLimit?: number;
-    isTerminal: boolean;
-  },
+  input: AddColumnConfigInput,
+  placement: ColumnPlacement,
 ): Config {
   if (config.columns.some((column) => column.id === input.id)) {
     throw new KabanError(`Column '${input.id}' already exists`, ExitCode.CONFLICT);
   }
 
+  const configColumn = createConfigColumn(input);
+  const columns = [...config.columns];
+  const targetIndex =
+    placement.type === "append"
+      ? columns.length
+      : columns.findIndex((column) => column.id === placement.targetId);
+
+  if (targetIndex === -1) {
+    throw new KabanError(
+      `Column '${placement.type === "append" ? input.id : placement.targetId}' does not exist in config.json`,
+      ExitCode.VALIDATION,
+    );
+  }
+
+  const insertIndex = placement.type === "after" ? targetIndex + 1 : targetIndex;
+  columns.splice(insertIndex, 0, configColumn);
+
   return validateConfig({
     ...config,
-    columns: [
-      ...config.columns,
-      {
-        id: input.id,
-        name: input.name.trim(),
-        ...(input.wipLimit === undefined ? {} : { wipLimit: input.wipLimit }),
-        ...(input.isTerminal ? { isTerminal: true } : {}),
-      },
-    ],
+    columns,
   });
 }
 
@@ -142,6 +196,8 @@ const addColumnCommand = new Command("add")
   .description("Add a board column")
   .argument("<id>", "Stable column ID")
   .argument("<name>", "Column display name")
+  .option("--after <column-id>", "Insert after an existing column")
+  .option("--before <column-id>", "Insert before an existing column")
   .option("--terminal", "Mark column as terminal")
   .option("--wip-limit <n>", "Set a WIP limit")
   .option("-j, --json", "Output as JSON")
@@ -152,13 +208,24 @@ const addColumnCommand = new Command("add")
       const { configPath } = getKabanPaths();
       const wipLimit = parseWipLimit(options.wipLimit);
       const isTerminal = options.terminal ?? false;
-      const nextConfig = buildConfigWithColumn(config, { id, name, wipLimit, isTerminal });
-      const configColumn = nextConfig.columns[nextConfig.columns.length - 1];
+      const placement = parsePlacement(options);
+      const currentColumns = await boardService.getColumns();
+      const position = getPlacementPosition(currentColumns, placement);
+      const nextConfig = buildConfigWithColumn(
+        config,
+        { id, name, wipLimit, isTerminal },
+        placement,
+      );
+      const configColumn = nextConfig.columns.find((column) => column.id === id);
+      if (!configColumn) {
+        throw new KabanError(`Column '${id}' was not added to config.json`, ExitCode.GENERAL_ERROR);
+      }
       const column = await boardService.addColumn({
         id: configColumn.id,
         name: configColumn.name,
         wipLimit: configColumn.wipLimit,
         isTerminal: configColumn.isTerminal ?? false,
+        position,
       });
 
       writeConfig(configPath, nextConfig);

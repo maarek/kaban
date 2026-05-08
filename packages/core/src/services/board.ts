@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { boards, columns } from "../db/schema.js";
 import type { DB } from "../db/types.js";
@@ -102,10 +102,20 @@ export class BoardService {
       .from(columns)
       .where(eq(columns.boardId, board.id));
 
+    const nextPosition = (maxPositionResult[0]?.max ?? -1) + 1;
     const position =
-      input.position === undefined
-        ? (maxPositionResult[0]?.max ?? -1) + 1
-        : validateColumnPosition(input.position);
+      input.position === undefined ? nextPosition : validateColumnPosition(input.position);
+
+    if (position > nextPosition) {
+      throw new KabanError("Column position cannot leave gaps", ExitCode.VALIDATION);
+    }
+
+    if (position < nextPosition) {
+      await this.db
+        .update(columns)
+        .set({ position: sql`${columns.position} + 1` })
+        .where(and(eq(columns.boardId, board.id), gte(columns.position, position)));
+    }
 
     await this.db.insert(columns).values({
       id,

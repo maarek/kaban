@@ -112,5 +112,30 @@ describe("BoardService", () => {
       expect(columns[5].wipLimit).toBe(3);
       expect(columns[5].isTerminal).toBe(true);
     });
+
+    test("inserts at position and shifts subsequent columns", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      const column = await service.addColumn({ id: "qa", name: "QA", position: 2 });
+      const columns = await service.getColumns();
+
+      expect(column.position).toBe(2);
+      expect(columns.map((c) => `${c.id}:${c.position}`)).toEqual([
+        "backlog:0",
+        "todo:1",
+        "qa:2",
+        "in_progress:3",
+        "review:4",
+        "done:5",
+      ]);
+    });
+
+    test("rejects positions that leave gaps", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await expect(service.addColumn({ id: "qa", name: "QA", position: 6 })).rejects.toThrow(
+        KabanError,
+      );
+    });
   });
 });

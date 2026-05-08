@@ -268,6 +268,84 @@ describe("columns command", () => {
     expect(savedConfig.columns.at(-1).wipLimit).toBe(3);
   });
 
+  test("add --before inserts before target in DB and config", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "add",
+      "qa",
+      "QA",
+      "--before",
+      "in_progress",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const addResponse = JSON.parse(stdout);
+    expect(addResponse.data.position).toBe(2);
+
+    const { stdout: listOut } = runCli(["columns", "list", "--json"]);
+    const listResponse = JSON.parse(listOut);
+    expect(
+      listResponse.data.map(
+        (column: { id: string; position: number }) => `${column.id}:${column.position}`,
+      ),
+    ).toEqual(["backlog:0", "todo:1", "qa:2", "in_progress:3", "review:4", "done:5"]);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "todo",
+      "qa",
+      "in_progress",
+      "review",
+      "done",
+    ]);
+  });
+
+  test("add --after inserts after target in DB and config", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "add",
+      "qa",
+      "QA",
+      "--after",
+      "todo",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const addResponse = JSON.parse(stdout);
+    expect(addResponse.data.position).toBe(2);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "todo",
+      "qa",
+      "in_progress",
+      "review",
+      "done",
+    ]);
+  });
+
+  test("add rejects conflicting placement flags", () => {
+    const { stderr, exitCode } = runCli([
+      "columns",
+      "add",
+      "qa",
+      "QA",
+      "--before",
+      "todo",
+      "--after",
+      "backlog",
+    ]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("Use only one of --before or --after");
+  });
+
   test("list --json returns expected shape", () => {
     const { stdout, exitCode } = runCli(["columns", "list", "--json"]);
 
