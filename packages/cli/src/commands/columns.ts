@@ -9,6 +9,11 @@ import { Command } from "commander";
 import { validateConfig, writeConfig } from "../lib/config.js";
 import { getContext, getKabanPaths } from "../lib/context.js";
 import { outputError, outputSuccess } from "../lib/json-output.js";
+import {
+  getTodoWriteColumnMapping,
+  getTodoWriteColumnRoles,
+  resolveTodoWriteColumnTargets,
+} from "../lib/todowrite-mapping.js";
 
 interface ColumnOutput {
   id: string;
@@ -17,6 +22,7 @@ interface ColumnOutput {
   position: number;
   wipLimit: number | null;
   isTerminal: boolean;
+  roles?: string[];
 }
 
 interface AddColumnOptions {
@@ -70,7 +76,7 @@ function toColumnOutput(column: Column): ColumnOutput {
 }
 
 function formatColumnsTable(columns: Required<ColumnOutput>[]): string {
-  const headers = ["ID", "Name", "Tasks", "Position", "WIP Limit", "Terminal"];
+  const headers = ["ID", "Name", "Tasks", "Position", "WIP Limit", "Terminal", "Roles"];
   const alignRight = new Set([2, 3, 4]);
   const rows = columns.map((column) => [
     column.id,
@@ -79,6 +85,7 @@ function formatColumnsTable(columns: Required<ColumnOutput>[]): string {
     String(column.position),
     column.wipLimit === null ? "-" : String(column.wipLimit),
     column.isTerminal ? "yes" : "no",
+    column.roles.length === 0 ? "-" : column.roles.join(", "),
   ]);
   const widths = headers.map((header, index) =>
     Math.max(header.length, ...rows.map((row) => row[index].length)),
@@ -303,6 +310,10 @@ function updateConfigColumn(config: Config, id: string, update: UpdateColumnInpu
 }
 
 function deleteConfigColumn(config: Config, id: string): Config {
+  if (config.columns.length <= 1) {
+    throw new KabanError("Cannot delete the only column", ExitCode.VALIDATION);
+  }
+
   const index = getConfigColumnIndex(config, id);
   const column = config.columns[index];
   const terminalCount = config.columns.filter((candidate) => candidate.isTerminal).length;
@@ -311,15 +322,39 @@ function deleteConfigColumn(config: Config, id: string): Config {
   }
 
   const columns = config.columns.filter((candidate) => candidate.id !== id);
+  const nextDefaultColumn = (columns.find((candidate) => !candidate.isTerminal) ?? columns[0]).id;
   const defaults =
     config.defaults.column === id
       ? {
           ...config.defaults,
-          column: (columns.find((candidate) => !candidate.isTerminal) ?? columns[0]).id,
+          column: nextDefaultColumn,
         }
       : config.defaults;
+  const mapping = getTodoWriteColumnMapping(config);
+  const defaultIndex = columns.findIndex((candidate) => candidate.id === defaults.column);
+  const columnsAfterDefault = defaultIndex === -1 ? [] : columns.slice(defaultIndex + 1);
+  const activeFallback =
+    columnsAfterDefault.find((candidate) => !candidate.isTerminal) ??
+    columns.find((candidate) => !candidate.isTerminal && candidate.id !== defaults.column) ??
+    columns.find((candidate) => !candidate.isTerminal) ??
+    columns[0];
+  const terminalFallback = columns.find((candidate) => candidate.isTerminal) ?? columns[0];
+  const cancelledFallback =
+    columns.find((candidate) => candidate.id === "backlog") ??
+    columns.find((candidate) => !candidate.isTerminal) ??
+    columns[0];
+  const todoWrite = {
+    pending: mapping.pending === id ? defaults.column : mapping.pending,
+    inProgress: mapping.inProgress === id ? activeFallback.id : mapping.inProgress,
+    completed: mapping.completed === id ? terminalFallback.id : mapping.completed,
+    cancelled: mapping.cancelled === id ? cancelledFallback.id : mapping.cancelled,
+  };
+  const sync = {
+    ...config.sync,
+    todoWrite,
+  };
 
-  return validateConfig({ ...config, columns, defaults });
+  return validateConfig({ ...config, columns, defaults, sync });
 }
 
 function handleColumnsError(error: unknown, json: boolean | undefined): never {
@@ -332,19 +367,22 @@ function handleColumnsError(error: unknown, json: boolean | undefined): never {
 }
 
 const listColumnsCommand = new Command("list")
-  .description("List board columns with task counts")
+  .description("List board columns with task counts and workflow roles")
   .option("-j, --json", "Output as JSON")
   .action(async (options) => {
     const json = options.json;
     try {
-      const { boardService, taskService } = await getContext();
+      const { boardService, config, taskService } = await getContext();
       const tasks = await taskService.listTasks();
       const taskCounts = new Map<string, number>();
       for (const task of tasks) {
         taskCounts.set(task.columnId, (taskCounts.get(task.columnId) ?? 0) + 1);
       }
-      const columns = (await boardService.getColumns()).map((column) => ({
+      const boardColumns = await boardService.getColumns();
+      const todoWriteTargets = resolveTodoWriteColumnTargets(config, boardColumns);
+      const columns = boardColumns.map((column) => ({
         ...toColumnOutput(column),
+        roles: getTodoWriteColumnRoles(config, column.id, todoWriteTargets),
         taskCount: taskCounts.get(column.id) ?? 0,
       }));
 

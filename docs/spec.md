@@ -129,11 +129,19 @@ interface Board {
   "defaults": {
     "column": "todo",
     "agent": "user"
+  },
+  "sync": {
+    "todoWrite": {
+      "pending": "todo",
+      "inProgress": "in_progress",
+      "completed": "done",
+      "cancelled": "backlog"
+    }
   }
 }
 ```
 
-`columns` order defines board order at initialization and is kept in sync by the `kaban columns` CLI. Column IDs are stable references used by tasks and commands; display names can be renamed. `defaults.column` is the fallback for task creation and next-task selection when no column is supplied. If the configured default column is deleted, Kaban chooses the first remaining non-terminal column as the new default. Terminal columns represent completed work.
+`columns` order defines board order at initialization and is kept in sync by the `kaban columns` CLI. Column IDs are stable references used by tasks and commands; display names can be renamed. `defaults.column` is the fallback for task creation and next-task selection when no column is supplied. `sync.todoWrite` maps Claude Code TodoWrite statuses to board column IDs. Older configs without `sync.todoWrite` are upgraded in place when the current CLI reads them. If the configured default column or a mapped TodoWrite column is deleted, Kaban chooses a remaining compatible column and updates the config. Terminal columns represent completed work.
 
 ---
 
@@ -206,7 +214,7 @@ kaban list --blocked                # Show blocked tasks
 kaban list --json                   # Output as JSON
 
 # Column operations
-kaban columns list                  # List columns with task counts and metadata
+kaban columns list                  # List columns with task counts, metadata, and roles
 kaban columns add qa "QA"           # Add a column at the end
 kaban columns add qa "QA" --before done --wip-limit 2
 kaban columns rename todo "Ready"   # Rename without changing the ID

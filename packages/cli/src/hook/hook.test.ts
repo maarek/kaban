@@ -129,6 +129,77 @@ describe("Hook Integration", () => {
     expect(taskC?.columnId).toBe("done");
   });
 
+  test("uses configured default when original todo column is deleted", () => {
+    runCli("columns delete todo");
+
+    const input = createHookInput([
+      { id: "todo-1", content: "Pending after todo delete", status: "pending", priority: "high" },
+    ]);
+
+    const result = runSync(input);
+    expect(result.exitCode).toBe(0);
+
+    const listOutput = runCli("list --json");
+    const response = JSON.parse(listOutput);
+    const task = response.data.find(
+      (t: { title: string }) => t.title === "Pending after todo delete",
+    );
+
+    expect(task).toBeDefined();
+    expect(task.columnId).toBe("backlog");
+  });
+
+  test("uses configured terminal mapping when original done column is deleted", () => {
+    runCli('columns add shipped "Shipped" --terminal');
+    runCli("columns delete done");
+
+    const input = createHookInput([
+      {
+        id: "todo-1",
+        content: "Completed after done delete",
+        status: "completed",
+        priority: "high",
+      },
+    ]);
+
+    const result = runSync(input);
+    expect(result.exitCode).toBe(0);
+
+    const listOutput = runCli("list --json");
+    const response = JSON.parse(listOutput);
+    const task = response.data.find(
+      (t: { title: string }) => t.title === "Completed after done delete",
+    );
+
+    expect(task).toBeDefined();
+    expect(task.columnId).toBe("shipped");
+  });
+
+  test("uses active fallback when original in_progress column is deleted", () => {
+    runCli("columns delete in_progress");
+
+    const input = createHookInput([
+      {
+        id: "todo-1",
+        content: "Active after in_progress delete",
+        status: "in_progress",
+        priority: "high",
+      },
+    ]);
+
+    const result = runSync(input);
+    expect(result.exitCode).toBe(0);
+
+    const listOutput = runCli("list --json");
+    const response = JSON.parse(listOutput);
+    const task = response.data.find(
+      (t: { title: string }) => t.title === "Active after in_progress delete",
+    );
+
+    expect(task).toBeDefined();
+    expect(task.columnId).toBe("review");
+  });
+
   test("skips cancelled tasks by default", () => {
     const input = createHookInput([
       { id: "todo-1", content: "Cancelled task", status: "cancelled", priority: "high" },

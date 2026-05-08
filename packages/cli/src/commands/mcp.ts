@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AuditService,
@@ -27,6 +27,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Command } from "commander";
+import { readConfig } from "../lib/config.js";
 
 export type McpResponse = { content: { type: string; text: string }[]; isError?: boolean };
 
@@ -71,7 +72,7 @@ async function createContext(basePath?: string) {
   }
 
   const db = await createDb(dbPath);
-  const config: Config = JSON.parse(readFileSync(configPath, "utf-8"));
+  const config = readConfig(configPath);
   const boardService = new BoardService(db);
   const taskService = new TaskService(db, boardService);
   const linkService = new LinkService(db);
@@ -533,7 +534,7 @@ async function startMcpServer(workingDirectory: string) {
         });
       }
 
-      const { config, taskService, boardService, linkService, markdownService, scoringService } =
+      const { db, config, taskService, boardService, linkService, markdownService, scoringService } =
         await createContext(workingDirectory);
 
       const taskArgs = args as Record<string, unknown> | undefined;

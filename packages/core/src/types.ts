@@ -17,6 +17,14 @@ export const DEFAULT_CONFIG: Config = {
     column: "todo",
     agent: "user",
   },
+  sync: {
+    todoWrite: {
+      pending: "todo",
+      inProgress: "in_progress",
+      completed: "done",
+      cancelled: "backlog",
+    },
+  },
 };
 
 export class KabanError extends Error {

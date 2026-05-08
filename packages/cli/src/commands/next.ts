@@ -55,7 +55,7 @@ export const nextCommand = new Command("next")
 
       console.log(`\n  Next: [${next.task.id.slice(0, 8)}] "${next.task.title}"`);
       console.log(
-        `  Score: ${next.score} (${Object.entries(next.breakdown)
+        `  Score: ${next.score} (${Object.entries(next.breakdown ?? {})
           .map(([k, v]) => `${k}:${v}`)
           .join(", ")})`,
       );

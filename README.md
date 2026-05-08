@@ -194,7 +194,7 @@ kaban <command> [options]
 | `kaban assign <id> [agent]` | Assign/unassign a task |
 | `kaban done <id>` | Mark task complete |
 | `kaban status` | Show board summary |
-| `kaban columns list` | List board columns, task counts, WIP limits, and terminal status |
+| `kaban columns list` | List board columns, task counts, WIP limits, terminal status, and workflow roles |
 | `kaban columns add <id> <name>` | Add a board column |
 | `kaban columns rename\|move\|update\|delete` | Manage existing board columns |
 | `kaban search <query>` | Full-text search in archive |
@@ -226,7 +226,7 @@ kaban move abc123 --next
 # Move and assign to agent in one command
 kaban move abc123 in_progress --assign claude
 
-# List board columns with task counts
+# List board columns with task counts and workflow roles
 kaban columns list
 
 # Add a QA column before done with a WIP limit
@@ -284,10 +284,22 @@ This will:
 Claude Code → TodoWrite → Hook → kaban sync → Kaban Board
 ```
 
-- **pending** todos → **Todo** column
-- **in_progress** todos → **In Progress** column  
-- **completed** todos → **Done** column
-- **cancelled** todos → **Backlog** column
+TodoWrite status mapping is configured in `.kaban/config.json` under `sync.todoWrite`:
+
+```json
+{
+  "sync": {
+    "todoWrite": {
+      "pending": "todo",
+      "inProgress": "in_progress",
+      "completed": "done",
+      "cancelled": "backlog"
+    }
+  }
+}
+```
+
+`kaban columns list` shows these mappings in the Roles column. If a mapped column is deleted with `kaban columns delete`, Kaban updates the mapping to a remaining compatible column.
 
 ### Logs
 
@@ -440,9 +452,11 @@ Boards start with these columns:
 | `review` | Review | 2 | no |
 | `done` | Done | none | yes |
 
-Columns can be managed with `kaban columns`. The column ID is the stable value stored on tasks and used by CLI/MCP commands; the display name can be renamed without changing task data. `kaban columns list` shows each column's current task count, order, WIP limit, and terminal status.
+Columns can be managed with `kaban columns`. The column ID is the stable value stored on tasks and used by CLI/MCP commands; the display name can be renamed without changing task data. `kaban columns list` shows each column's current task count, order, WIP limit, terminal status, and workflow roles.
 
-`.kaban/config.json` stores the ordered column configuration and `defaults.column`. The default column is used when commands such as `kaban add`, `kaban next`, and MCP task creation do not receive an explicit column. If you delete the configured default column, Kaban chooses the first remaining non-terminal column as the new default.
+`.kaban/config.json` stores the ordered column configuration, `defaults.column`, and `sync.todoWrite` mappings. The default column is used when commands such as `kaban add`, `kaban next`, and MCP task creation do not receive an explicit column. TodoWrite mappings define where Claude Code hook statuses land. If you delete the configured default column, Kaban chooses the first remaining non-terminal column as the new default and updates any affected TodoWrite mapping.
+
+Older configs without `sync.todoWrite` are upgraded in place the first time the current CLI reads them.
 
 WIP limits are advisory workflow limits enforced by task movement unless bypassed with the relevant force option. Terminal columns represent completed work; deleting or unmarking the only terminal column is rejected.
 

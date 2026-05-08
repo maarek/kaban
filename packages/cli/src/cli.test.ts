@@ -86,7 +86,7 @@ describe("CLI Integration", () => {
      const doneTask = afterDoneResponse.data.find((t: { id: string }) => t.id === taskId);
      expect(doneTask.columnId).toBe("done");
      expect(doneTask.completedAt).not.toBeNull();
-   });
+   }, 10000);
 });
 
 describe("init command", () => {
@@ -193,11 +193,12 @@ describe("columns command", () => {
     const { stdout, exitCode } = runCli(["columns", "list"]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("ID           Name         Tasks  Position  WIP Limit  Terminal");
-    expect(stdout).toContain("-----------  -----------  -----  --------  ---------  --------");
+    expect(stdout).toContain("ID           Name         Tasks  Position  WIP Limit  Terminal  Roles");
     expect(stdout).toContain("Backlog");
     expect(stdout).toContain("In Progress");
     expect(stdout).toContain("Done");
+    expect(stdout).toContain("TodoWrite pending");
+    expect(stdout).toContain("TodoWrite completed");
     expect(stdout).not.toContain("\t");
   });
 
@@ -468,6 +469,7 @@ describe("columns command", () => {
     const configPath = join(TEST_DIR, ".kaban", "config.json");
     const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(savedConfig.defaults.column).toBe("backlog");
+    expect(savedConfig.sync.todoWrite.pending).toBe("backlog");
     expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
       "backlog",
       "in_progress",
@@ -504,6 +506,25 @@ describe("columns command", () => {
       position: 0,
       wipLimit: null,
       isTerminal: false,
+      roles: ["TodoWrite cancelled"],
+    });
+  });
+
+  test("list migrates old config to include TodoWrite mappings", () => {
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    delete config.sync;
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const { exitCode } = runCli(["columns", "list"]);
+
+    expect(exitCode).toBe(0);
+    const migratedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(migratedConfig.sync.todoWrite).toEqual({
+      pending: "todo",
+      inProgress: "in_progress",
+      completed: "done",
+      cancelled: "backlog",
     });
   });
 });

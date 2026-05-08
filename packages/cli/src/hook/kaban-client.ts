@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { Config } from "@kaban-board/core";
+import { readConfig } from "../lib/config.js";
 import type { KabanTask } from "./types.js";
 
 interface KabanListResponse {
@@ -11,7 +15,13 @@ interface KabanListResponse {
 
 interface KabanStatusResponse {
   board: { name: string };
-  columns: Array<{ id: string; name: string; count: number }>;
+  columns: Array<{
+    id: string;
+    name: string;
+    count: number;
+    wipLimit: number | null;
+    isTerminal: boolean;
+  }>;
   totalTasks: number;
 }
 
@@ -32,6 +42,15 @@ export class KabanClient {
     } catch {
       return false;
     }
+  }
+
+  getConfig(): Config | null {
+    const configPath = join(this.cwd, ".kaban", "config.json");
+    if (!existsSync(configPath)) {
+      return null;
+    }
+
+    return readConfig(configPath);
   }
 
   async listTasks(columnId?: string): Promise<KabanTask[]> {
@@ -87,7 +106,14 @@ export class KabanClient {
   }
 
   async addTask(title: string, columnId: string = "todo"): Promise<string | null> {
-    const result = await this.exec([...this.kabanCmd, "add", title, "--column", columnId, "--json"]);
+    const result = await this.exec([
+      ...this.kabanCmd,
+      "add",
+      title,
+      "--column",
+      columnId,
+      "--json",
+    ]);
     if (result.exitCode !== 0) {
       return null;
     }

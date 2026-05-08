@@ -114,6 +114,13 @@ export const ColumnConfigSchema = z.object({
   isTerminal: z.boolean().optional(),
 });
 
+export const TodoWriteColumnMappingSchema = z.object({
+  pending: ColumnIdSchema.optional(),
+  inProgress: ColumnIdSchema.optional(),
+  completed: ColumnIdSchema.optional(),
+  cancelled: ColumnIdSchema.optional(),
+});
+
 export const ConfigSchema = z.object({
   board: z.object({
     name: z.string().min(1).max(100),
@@ -123,6 +130,11 @@ export const ConfigSchema = z.object({
     column: ColumnIdSchema,
     agent: AgentNameSchema,
   }),
+  sync: z
+    .object({
+      todoWrite: TodoWriteColumnMappingSchema.optional(),
+    })
+    .optional(),
 });
 
 export const AddTaskInputSchema = z.object({
