@@ -101,10 +101,17 @@ export class TaskService {
       : input.agent
         ? validateAgentName(input.agent)
         : "user";
-    const columnId = input.columnId ? validateColumnId(input.columnId) : "todo";
+    let columnId = input.columnId ? validateColumnId(input.columnId) : "todo";
     const dueDate = parseDateOrNull(input.dueDate);
 
-    const column = await this.boardService.getColumn(columnId);
+    let column = await this.boardService.getColumn(columnId);
+    if (!column && !input.columnId) {
+      const columns = await this.boardService.getColumns();
+      column = columns.find((c) => !c.isTerminal) ?? columns[0] ?? null;
+      if (column) {
+        columnId = column.id;
+      }
+    }
     if (!column) {
       throw new KabanError(`Column '${columnId}' does not exist`, ExitCode.VALIDATION);
     }

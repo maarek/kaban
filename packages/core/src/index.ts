@@ -40,7 +40,7 @@ export {
   type AuditObjectType,
   type AuditStats,
 } from "./services/audit.js";
-export { type AddColumnInput, BoardService } from "./services/board.js";
+export { type AddColumnInput, BoardService, type UpdateColumnInput } from "./services/board.js";
 export { DependencyService } from "./services/dependency.js";
 export { LinkService, type TaskLink } from "./services/link.js";
 export { type LinkType } from "./db/schema.js";

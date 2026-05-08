@@ -346,6 +346,151 @@ describe("columns command", () => {
     expect(stderr).toContain("Use only one of --before or --after");
   });
 
+  test("rename updates DB column and config", () => {
+    const { stdout, exitCode } = runCli(["columns", "rename", "todo", "Ready", "--json"]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data.id).toBe("todo");
+    expect(response.data.name).toBe("Ready");
+
+    const { stdout: listOut } = runCli(["columns", "list", "--json"]);
+    const listResponse = JSON.parse(listOut);
+    const todoColumn = listResponse.data.find((column: { id: string }) => column.id === "todo");
+    expect(todoColumn.name).toBe("Ready");
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.find((column: { id: string }) => column.id === "todo").name).toBe(
+      "Ready",
+    );
+  });
+
+  test("move reorders DB columns and config", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "move",
+      "done",
+      "--before",
+      "todo",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data.position).toBe(1);
+
+    const { stdout: listOut } = runCli(["columns", "list", "--json"]);
+    const listResponse = JSON.parse(listOut);
+    expect(listResponse.data.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "done",
+      "todo",
+      "in_progress",
+      "review",
+    ]);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "done",
+      "todo",
+      "in_progress",
+      "review",
+    ]);
+  });
+
+  test("update changes column metadata in DB and config", () => {
+    const { stdout, exitCode } = runCli([
+      "columns",
+      "update",
+      "review",
+      "--clear-wip-limit",
+      "--terminal",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data.wipLimit).toBeNull();
+    expect(response.data.isTerminal).toBe(true);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    const reviewColumn = savedConfig.columns.find((column: { id: string }) => column.id === "review");
+    expect(reviewColumn.wipLimit).toBeUndefined();
+    expect(reviewColumn.isTerminal).toBe(true);
+  });
+
+  test("update rejects empty updates", () => {
+    const { stderr, exitCode } = runCli(["columns", "update", "review"]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("No column updates specified");
+  });
+
+  test("delete removes empty column and updates config", () => {
+    runCli(["columns", "add", "qa", "QA", "--before", "done"]);
+
+    const { stdout, exitCode } = runCli(["columns", "delete", "qa", "--json"]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data).toEqual({ id: "qa", deleted: true });
+
+    const { stdout: listOut } = runCli(["columns", "list", "--json"]);
+    const listResponse = JSON.parse(listOut);
+    expect(
+      listResponse.data.map(
+        (column: { id: string; position: number }) => `${column.id}:${column.position}`,
+      ),
+    ).toEqual(["backlog:0", "todo:1", "in_progress:2", "review:3", "done:4"]);
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "todo",
+      "in_progress",
+      "review",
+      "done",
+    ]);
+  });
+
+  test("delete allows configured default column and chooses a new default", () => {
+    const { stdout, exitCode } = runCli(["columns", "delete", "todo", "--json"]);
+
+    expect(exitCode).toBe(0);
+    const response = JSON.parse(stdout);
+    expect(response.data).toEqual({ id: "todo", deleted: true });
+
+    const configPath = join(TEST_DIR, ".kaban", "config.json");
+    const savedConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(savedConfig.defaults.column).toBe("backlog");
+    expect(savedConfig.columns.map((column: { id: string }) => column.id)).toEqual([
+      "backlog",
+      "in_progress",
+      "review",
+      "done",
+    ]);
+
+    runCli(["add", "Task after default delete", "--force"]);
+    const { stdout: listOut } = runCli(["list", "--json"]);
+    const listResponse = JSON.parse(listOut);
+    expect(listResponse.data[0].columnId).toBe("backlog");
+  });
+
+  test("delete rejects column containing tasks", () => {
+    runCli(["columns", "add", "qa", "QA"]);
+    runCli(["add", "Task in QA", "--column", "qa", "--force"]);
+
+    const { stderr, exitCode } = runCli(["columns", "delete", "qa"]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("contains tasks");
+  });
+
   test("list --json returns expected shape", () => {
     const { stdout, exitCode } = runCli(["columns", "list", "--json"]);
 

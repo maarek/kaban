@@ -1,4 +1,10 @@
-import { type Column, type Config, ExitCode, KabanError } from "@kaban-board/core";
+import {
+  type Column,
+  type Config,
+  ExitCode,
+  KabanError,
+  type UpdateColumnInput,
+} from "@kaban-board/core";
 import { Command } from "commander";
 import { validateConfig, writeConfig } from "../lib/config.js";
 import { getContext, getKabanPaths } from "../lib/context.js";
@@ -21,6 +27,24 @@ interface AddColumnOptions {
   json?: boolean;
 }
 
+interface MoveColumnOptions {
+  after?: string;
+  before?: string;
+  json?: boolean;
+}
+
+interface UpdateColumnOptions {
+  wipLimit?: string;
+  clearWipLimit?: boolean;
+  terminal?: boolean;
+  notTerminal?: boolean;
+  json?: boolean;
+}
+
+interface JsonOptions {
+  json?: boolean;
+}
+
 interface AddColumnConfigInput {
   id: string;
   name: string;
@@ -32,6 +56,8 @@ type ColumnPlacement =
   | { type: "append" }
   | { type: "before"; targetId: string }
   | { type: "after"; targetId: string };
+
+type RequiredColumnPlacement = Exclude<ColumnPlacement, { type: "append" }>;
 
 function toColumnOutput(column: Column): ColumnOutput {
   return {
@@ -101,6 +127,14 @@ function parsePlacement(options: AddColumnOptions): ColumnPlacement {
   return { type: "append" };
 }
 
+function parseRequiredPlacement(options: MoveColumnOptions): RequiredColumnPlacement {
+  const placement = parsePlacement(options);
+  if (placement.type === "append") {
+    throw new KabanError("Use --before or --after", ExitCode.VALIDATION);
+  }
+  return placement;
+}
+
 function getPlacementPosition(columns: Column[], placement: ColumnPlacement): number | undefined {
   if (placement.type === "append") {
     return undefined;
@@ -114,6 +148,28 @@ function getPlacementPosition(columns: Column[], placement: ColumnPlacement): nu
   return placement.type === "before" ? target.position : target.position + 1;
 }
 
+function getMovePosition(
+  columns: Column[],
+  id: string,
+  placement: RequiredColumnPlacement,
+): number {
+  const sourceIndex = columns.findIndex((column) => column.id === id);
+  if (sourceIndex === -1) {
+    throw new KabanError(`Column '${id}' does not exist`, ExitCode.VALIDATION);
+  }
+
+  const targetIndex = columns.findIndex((column) => column.id === placement.targetId);
+  if (targetIndex === -1) {
+    throw new KabanError(`Column '${placement.targetId}' does not exist`, ExitCode.VALIDATION);
+  }
+  if (sourceIndex === targetIndex) {
+    throw new KabanError("Cannot move a column relative to itself", ExitCode.VALIDATION);
+  }
+
+  const insertIndex = placement.type === "before" ? targetIndex : targetIndex + 1;
+  return sourceIndex < insertIndex ? insertIndex - 1 : insertIndex;
+}
+
 function createConfigColumn(input: AddColumnConfigInput) {
   return {
     id: input.id,
@@ -121,6 +177,14 @@ function createConfigColumn(input: AddColumnConfigInput) {
     ...(input.wipLimit === undefined ? {} : { wipLimit: input.wipLimit }),
     ...(input.isTerminal ? { isTerminal: true } : {}),
   };
+}
+
+function getConfigColumnIndex(config: Config, id: string): number {
+  const index = config.columns.findIndex((column) => column.id === id);
+  if (index === -1) {
+    throw new KabanError(`Column '${id}' does not exist in config.json`, ExitCode.VALIDATION);
+  }
+  return index;
 }
 
 function buildConfigWithColumn(
@@ -155,6 +219,109 @@ function buildConfigWithColumn(
   });
 }
 
+function renameConfigColumn(config: Config, id: string, name: string): Config {
+  const index = getConfigColumnIndex(config, id);
+  const columns = [...config.columns];
+  columns[index] = {
+    ...columns[index],
+    name: name.trim(),
+  };
+
+  return validateConfig({ ...config, columns });
+}
+
+function moveConfigColumn(config: Config, id: string, placement: RequiredColumnPlacement): Config {
+  const columns = [...config.columns];
+  const sourceIndex = getConfigColumnIndex(config, id);
+  const targetIndex = getConfigColumnIndex(config, placement.targetId);
+  if (sourceIndex === targetIndex) {
+    throw new KabanError("Cannot move a column relative to itself", ExitCode.VALIDATION);
+  }
+
+  const [column] = columns.splice(sourceIndex, 1);
+  const adjustedTargetIndex = columns.findIndex((candidate) => candidate.id === placement.targetId);
+  const insertIndex = placement.type === "before" ? adjustedTargetIndex : adjustedTargetIndex + 1;
+  columns.splice(insertIndex, 0, column);
+
+  return validateConfig({ ...config, columns });
+}
+
+function parseColumnUpdate(options: UpdateColumnOptions): UpdateColumnInput {
+  if (options.wipLimit !== undefined && options.clearWipLimit) {
+    throw new KabanError("Use only one of --wip-limit or --clear-wip-limit", ExitCode.VALIDATION);
+  }
+  if (options.terminal && options.notTerminal) {
+    throw new KabanError("Use only one of --terminal or --not-terminal", ExitCode.VALIDATION);
+  }
+
+  const update: UpdateColumnInput = {};
+  if (options.wipLimit !== undefined) {
+    update.wipLimit = parseWipLimit(options.wipLimit);
+  }
+  if (options.clearWipLimit) {
+    update.wipLimit = null;
+  }
+  if (options.terminal) {
+    update.isTerminal = true;
+  }
+  if (options.notTerminal) {
+    update.isTerminal = false;
+  }
+
+  if (Object.keys(update).length === 0) {
+    throw new KabanError("No column updates specified", ExitCode.VALIDATION);
+  }
+
+  return update;
+}
+
+function updateConfigColumn(config: Config, id: string, update: UpdateColumnInput): Config {
+  const index = getConfigColumnIndex(config, id);
+  const columns = [...config.columns];
+  const column = { ...columns[index] };
+
+  if (update.name !== undefined) {
+    column.name = update.name.trim();
+  }
+  if (update.wipLimit !== undefined) {
+    if (update.wipLimit === null) {
+      delete column.wipLimit;
+    } else {
+      column.wipLimit = update.wipLimit;
+    }
+  }
+  if (update.isTerminal !== undefined) {
+    if (update.isTerminal) {
+      column.isTerminal = true;
+    } else {
+      delete column.isTerminal;
+    }
+  }
+
+  columns[index] = column;
+  return validateConfig({ ...config, columns });
+}
+
+function deleteConfigColumn(config: Config, id: string): Config {
+  const index = getConfigColumnIndex(config, id);
+  const column = config.columns[index];
+  const terminalCount = config.columns.filter((candidate) => candidate.isTerminal).length;
+  if (column.isTerminal && terminalCount <= 1) {
+    throw new KabanError("Cannot delete the only terminal column", ExitCode.VALIDATION);
+  }
+
+  const columns = config.columns.filter((candidate) => candidate.id !== id);
+  const defaults =
+    config.defaults.column === id
+      ? {
+          ...config.defaults,
+          column: (columns.find((candidate) => !candidate.isTerminal) ?? columns[0]).id,
+        }
+      : config.defaults;
+
+  return validateConfig({ ...config, columns, defaults });
+}
+
 function handleColumnsError(error: unknown, json: boolean | undefined): never {
   if (error instanceof KabanError) {
     if (json) outputError(error.code, error.message);
@@ -165,7 +332,7 @@ function handleColumnsError(error: unknown, json: boolean | undefined): never {
 }
 
 const listColumnsCommand = new Command("list")
-  .description("List board columns")
+  .description("List board columns with task counts")
   .option("-j, --json", "Output as JSON")
   .action(async (options) => {
     const json = options.json;
@@ -193,13 +360,13 @@ const listColumnsCommand = new Command("list")
   });
 
 const addColumnCommand = new Command("add")
-  .description("Add a board column")
-  .argument("<id>", "Stable column ID")
+  .description("Add a board column and sync config")
+  .argument("<id>", "Stable column ID used by tasks and commands")
   .argument("<name>", "Column display name")
-  .option("--after <column-id>", "Insert after an existing column")
-  .option("--before <column-id>", "Insert before an existing column")
-  .option("--terminal", "Mark column as terminal")
-  .option("--wip-limit <n>", "Set a WIP limit")
+  .option("--after <column-id>", "Insert after this existing column")
+  .option("--before <column-id>", "Insert before this existing column")
+  .option("--terminal", "Mark tasks in this column as complete")
+  .option("--wip-limit <n>", "Set a positive WIP limit")
   .option("-j, --json", "Output as JSON")
   .action(async (id: string, name: string, options: AddColumnOptions) => {
     const json = options.json;
@@ -245,7 +412,135 @@ const addColumnCommand = new Command("add")
     }
   });
 
+const renameColumnCommand = new Command("rename")
+  .description("Rename a column display name")
+  .argument("<id>", "Column ID to keep unchanged")
+  .argument("<name>", "New display name")
+  .option("-j, --json", "Output as JSON")
+  .action(async (id: string, name: string, options: JsonOptions) => {
+    const json = options.json;
+    try {
+      const { boardService, config } = await getContext();
+      const { configPath } = getKabanPaths();
+      const nextConfig = renameConfigColumn(config, id, name);
+      const configColumn = nextConfig.columns.find((column) => column.id === id);
+      if (!configColumn) {
+        throw new KabanError(
+          `Column '${id}' was not renamed in config.json`,
+          ExitCode.GENERAL_ERROR,
+        );
+      }
+      const column = await boardService.renameColumn(id, configColumn.name);
+
+      writeConfig(configPath, nextConfig);
+
+      const output = toColumnOutput(column);
+      if (json) {
+        outputSuccess(output);
+        return;
+      }
+
+      console.log(`Renamed column "${id}" to "${output.name}"`);
+    } catch (error) {
+      handleColumnsError(error, json);
+    }
+  });
+
+const moveColumnCommand = new Command("move")
+  .description("Move a board column before or after another column")
+  .argument("<id>", "Column ID to move")
+  .option("--after <column-id>", "Move after this existing column")
+  .option("--before <column-id>", "Move before this existing column")
+  .option("-j, --json", "Output as JSON")
+  .action(async (id: string, options: MoveColumnOptions) => {
+    const json = options.json;
+    try {
+      const { boardService, config } = await getContext();
+      const { configPath } = getKabanPaths();
+      const placement = parseRequiredPlacement(options);
+      const currentColumns = await boardService.getColumns();
+      const position = getMovePosition(currentColumns, id, placement);
+      const nextConfig = moveConfigColumn(config, id, placement);
+      const column = await boardService.moveColumn(id, position);
+
+      writeConfig(configPath, nextConfig);
+
+      const output = toColumnOutput(column);
+      if (json) {
+        outputSuccess(output);
+        return;
+      }
+
+      console.log(`Moved column "${output.id}" to position ${output.position}`);
+    } catch (error) {
+      handleColumnsError(error, json);
+    }
+  });
+
+const updateColumnCommand = new Command("update")
+  .description("Update WIP limit or terminal status")
+  .argument("<id>", "Column ID")
+  .option("--wip-limit <n>", "Set a positive WIP limit")
+  .option("--clear-wip-limit", "Remove the WIP limit")
+  .option("--terminal", "Mark tasks in this column as complete")
+  .option("--not-terminal", "Mark tasks in this column as incomplete")
+  .option("-j, --json", "Output as JSON")
+  .action(async (id: string, options: UpdateColumnOptions) => {
+    const json = options.json;
+    try {
+      const { boardService, config } = await getContext();
+      const { configPath } = getKabanPaths();
+      const update = parseColumnUpdate(options);
+      const nextConfig = updateConfigColumn(config, id, update);
+      const column = await boardService.updateColumn(id, update);
+
+      writeConfig(configPath, nextConfig);
+
+      const output = toColumnOutput(column);
+      if (json) {
+        outputSuccess(output);
+        return;
+      }
+
+      console.log(`Updated column "${output.id}"`);
+      console.log(`  WIP limit: ${output.wipLimit ?? "none"}`);
+      console.log(`  Terminal: ${output.isTerminal ? "yes" : "no"}`);
+    } catch (error) {
+      handleColumnsError(error, json);
+    }
+  });
+
+const deleteColumnCommand = new Command("delete")
+  .description("Delete an empty board column and choose a new default if needed")
+  .argument("<id>", "Column ID to delete")
+  .option("-j, --json", "Output as JSON")
+  .action(async (id: string, options: JsonOptions) => {
+    const json = options.json;
+    try {
+      const { boardService, config } = await getContext();
+      const { configPath } = getKabanPaths();
+      const nextConfig = deleteConfigColumn(config, id);
+
+      await boardService.deleteColumn(id);
+      writeConfig(configPath, nextConfig);
+
+      const output = { id, deleted: true };
+      if (json) {
+        outputSuccess(output);
+        return;
+      }
+
+      console.log(`Deleted column "${id}"`);
+    } catch (error) {
+      handleColumnsError(error, json);
+    }
+  });
+
 export const columnsCommand = new Command("columns")
-  .description("Manage board columns")
+  .description("Manage board columns and config sync")
   .addCommand(listColumnsCommand)
-  .addCommand(addColumnCommand);
+  .addCommand(addColumnCommand)
+  .addCommand(renameColumnCommand)
+  .addCommand(moveColumnCommand)
+  .addCommand(updateColumnCommand)
+  .addCommand(deleteColumnCommand);

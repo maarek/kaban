@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { createDb, type DB, initializeSchema } from "../db/index.js";
 import { DEFAULT_CONFIG, KabanError } from "../types.js";
 import { BoardService } from "./board.js";
+import { TaskService } from "./task.js";
 
 const TEST_DIR = ".kaban-test-board";
 const TEST_DB = `${TEST_DIR}/board.db`;
@@ -136,6 +137,90 @@ describe("BoardService", () => {
       await expect(service.addColumn({ id: "qa", name: "QA", position: 6 })).rejects.toThrow(
         KabanError,
       );
+    });
+  });
+
+  describe("column lifecycle", () => {
+    test("renames a column without changing ID or position", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      const column = await service.renameColumn("todo", "Ready");
+
+      expect(column.id).toBe("todo");
+      expect(column.name).toBe("Ready");
+      expect(column.position).toBe(1);
+    });
+
+    test("updates column metadata", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      const column = await service.updateColumn("review", {
+        wipLimit: null,
+        isTerminal: true,
+      });
+
+      expect(column.wipLimit).toBeNull();
+      expect(column.isTerminal).toBe(true);
+    });
+
+    test("rejects unsetting terminal on the only terminal column", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await expect(service.updateColumn("done", { isTerminal: false })).rejects.toThrow(KabanError);
+    });
+
+    test("moves a column and renumbers positions", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      const column = await service.moveColumn("done", 1);
+      const columns = await service.getColumns();
+
+      expect(column.position).toBe(1);
+      expect(columns.map((c) => `${c.id}:${c.position}`)).toEqual([
+        "backlog:0",
+        "done:1",
+        "todo:2",
+        "in_progress:3",
+        "review:4",
+      ]);
+    });
+
+    test("deletes an empty column and renumbers positions", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await service.deleteColumn("review");
+      const columns = await service.getColumns();
+
+      expect(columns.map((c) => `${c.id}:${c.position}`)).toEqual([
+        "backlog:0",
+        "todo:1",
+        "in_progress:2",
+        "done:3",
+      ]);
+    });
+
+    test("rejects deleting a column that contains tasks", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+      const taskService = new TaskService(db, service);
+      await taskService.addTask({ title: "Task in todo", columnId: "todo" });
+
+      await expect(service.deleteColumn("todo")).rejects.toThrow(KabanError);
+    });
+
+    test("task creation without column falls back when todo column is deleted", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+      await service.deleteColumn("todo");
+      const taskService = new TaskService(db, service);
+
+      const task = await taskService.addTask({ title: "Task without todo" });
+
+      expect(task.columnId).toBe("backlog");
+    });
+
+    test("rejects deleting the only terminal column", async () => {
+      await service.initializeBoard(DEFAULT_CONFIG);
+
+      await expect(service.deleteColumn("done")).rejects.toThrow(KabanError);
     });
   });
 });

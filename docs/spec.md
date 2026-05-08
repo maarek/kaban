@@ -116,15 +116,24 @@ interface Board {
 
 ```json
 {
+  "board": {
+    "name": "Kaban Board"
+  },
   "columns": [
-    { "id": "backlog", "name": "Backlog", "position": 0 },
-    { "id": "todo", "name": "Todo", "position": 1 },
-    { "id": "in_progress", "name": "In Progress", "position": 2, "wipLimit": 3 },
-    { "id": "review", "name": "Review", "position": 3 },
-    { "id": "done", "name": "Done", "position": 4, "isTerminal": true }
-  ]
+    { "id": "backlog", "name": "Backlog" },
+    { "id": "todo", "name": "Todo" },
+    { "id": "in_progress", "name": "In Progress", "wipLimit": 3 },
+    { "id": "review", "name": "Review", "wipLimit": 2 },
+    { "id": "done", "name": "Done", "isTerminal": true }
+  ],
+  "defaults": {
+    "column": "todo",
+    "agent": "user"
+  }
 }
 ```
+
+`columns` order defines board order at initialization and is kept in sync by the `kaban columns` CLI. Column IDs are stable references used by tasks and commands; display names can be renamed. `defaults.column` is the fallback for task creation and next-task selection when no column is supplied. If the configured default column is deleted, Kaban chooses the first remaining non-terminal column as the new default. Terminal columns represent completed work.
 
 ---
 
@@ -172,7 +181,7 @@ kaban init                          # Initialize board in current directory
 kaban status                        # Show board summary
 
 # Task operations
-kaban add "Task title"              # Add to default column (todo)
+kaban add "Task title"              # Add to configured default column
 kaban add "Title" --column backlog  # Add to specific column
 kaban add "Title" --agent claude    # Add as agent
 kaban add "Title" --depends-on 3,5  # Add with dependencies
@@ -195,6 +204,16 @@ kaban list --column todo            # Filter by column
 kaban list --agent claude           # Filter by agent
 kaban list --blocked                # Show blocked tasks
 kaban list --json                   # Output as JSON
+
+# Column operations
+kaban columns list                  # List columns with task counts and metadata
+kaban columns add qa "QA"           # Add a column at the end
+kaban columns add qa "QA" --before done --wip-limit 2
+kaban columns rename todo "Ready"   # Rename without changing the ID
+kaban columns move review --after qa
+kaban columns update done --terminal
+kaban columns update qa --clear-wip-limit
+kaban columns delete qa             # Delete an empty column
 
 # Dependencies
 kaban deps <id>                     # Show task dependencies

@@ -1,6 +1,6 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, lt, lte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-import { boards, columns } from "../db/schema.js";
+import { boards, columns, tasks } from "../db/schema.js";
 import type { DB } from "../db/types.js";
 import { type Board, type Column, type Config, ExitCode, KabanError } from "../types.js";
 import { validateColumnId } from "../validation.js";
@@ -11,6 +11,12 @@ export interface AddColumnInput {
   wipLimit?: number;
   isTerminal?: boolean;
   position?: number;
+}
+
+export interface UpdateColumnInput {
+  name?: string;
+  wipLimit?: number | null;
+  isTerminal?: boolean;
 }
 
 function validateColumnName(name: string): string {
@@ -40,6 +46,14 @@ function validateWipLimit(wipLimit: number): number {
 
 export class BoardService {
   constructor(private db: DB) {}
+
+  private async getColumnOrThrow(id: string): Promise<Column> {
+    const column = await this.getColumn(id);
+    if (!column) {
+      throw new KabanError(`Column '${id}' does not exist`, ExitCode.VALIDATION);
+    }
+    return column;
+  }
 
   async initializeBoard(config: Config): Promise<Board> {
     const now = new Date();
@@ -132,6 +146,136 @@ export class BoardService {
     }
 
     return column;
+  }
+
+  async renameColumn(id: string, name: string): Promise<Column> {
+    return this.updateColumn(id, { name });
+  }
+
+  async updateColumn(id: string, input: UpdateColumnInput): Promise<Column> {
+    const columnId = validateColumnId(id);
+    const column = await this.getColumnOrThrow(columnId);
+    const updates: {
+      name?: string;
+      wipLimit?: number | null;
+      isTerminal?: boolean;
+    } = {};
+
+    if (input.name !== undefined) {
+      updates.name = validateColumnName(input.name);
+    }
+    if (input.wipLimit !== undefined) {
+      updates.wipLimit = input.wipLimit === null ? null : validateWipLimit(input.wipLimit);
+    }
+    if (input.isTerminal !== undefined) {
+      if (column.isTerminal && !input.isTerminal) {
+        const terminalColumns = await this.getTerminalColumns();
+        if (terminalColumns.length <= 1) {
+          throw new KabanError(
+            "Cannot unset terminal on the only terminal column",
+            ExitCode.VALIDATION,
+          );
+        }
+      }
+      updates.isTerminal = input.isTerminal;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new KabanError("No column updates specified", ExitCode.VALIDATION);
+    }
+
+    await this.db.update(columns).set(updates).where(eq(columns.id, columnId));
+
+    return this.getColumnOrThrow(columnId);
+  }
+
+  async moveColumn(id: string, position: number): Promise<Column> {
+    const columnId = validateColumnId(id);
+    const nextPosition = validateColumnPosition(position);
+    const board = await this.getBoard();
+    if (!board) {
+      throw new KabanError("No board found", ExitCode.NOT_FOUND);
+    }
+    const currentColumns = await this.getColumns();
+    const column = currentColumns.find((c) => c.id === columnId);
+    if (!column) {
+      throw new KabanError(`Column '${columnId}' does not exist`, ExitCode.VALIDATION);
+    }
+
+    const lastPosition = currentColumns.length - 1;
+    if (nextPosition > lastPosition) {
+      throw new KabanError("Column position cannot leave gaps", ExitCode.VALIDATION);
+    }
+
+    if (nextPosition === column.position) {
+      return column;
+    }
+
+    if (nextPosition < column.position) {
+      await this.db
+        .update(columns)
+        .set({ position: sql`${columns.position} + 1` })
+        .where(
+          and(
+            eq(columns.boardId, board.id),
+            gte(columns.position, nextPosition),
+            lt(columns.position, column.position),
+          ),
+        );
+    } else {
+      await this.db
+        .update(columns)
+        .set({ position: sql`${columns.position} - 1` })
+        .where(
+          and(
+            eq(columns.boardId, board.id),
+            gt(columns.position, column.position),
+            lte(columns.position, nextPosition),
+          ),
+        );
+    }
+
+    await this.db.update(columns).set({ position: nextPosition }).where(eq(columns.id, columnId));
+
+    return this.getColumnOrThrow(columnId);
+  }
+
+  async deleteColumn(id: string): Promise<void> {
+    const columnId = validateColumnId(id);
+    const column = await this.getColumnOrThrow(columnId);
+    const board = await this.getBoard();
+    if (!board) {
+      throw new KabanError("No board found", ExitCode.NOT_FOUND);
+    }
+    const allColumns = await this.getColumns();
+    if (allColumns.length <= 1) {
+      throw new KabanError("Cannot delete the only column", ExitCode.VALIDATION);
+    }
+
+    const taskCountResult = await this.db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(tasks)
+      .where(eq(tasks.columnId, columnId));
+    const taskCount = taskCountResult[0]?.count ?? 0;
+    if (taskCount > 0) {
+      throw new KabanError(
+        `Cannot delete column '${columnId}' because it contains tasks`,
+        ExitCode.VALIDATION,
+      );
+    }
+
+    if (column.isTerminal) {
+      const terminalColumns = await this.getTerminalColumns();
+      if (terminalColumns.length <= 1) {
+        throw new KabanError("Cannot delete the only terminal column", ExitCode.VALIDATION);
+      }
+    }
+
+    await this.db.delete(columns).where(eq(columns.id, columnId));
+    await this.db
+      .update(columns)
+      .set({ position: sql`${columns.position} - 1` })
+      .where(and(eq(columns.boardId, board.id), gt(columns.position, column.position)));
   }
 
   async getColumn(id: string): Promise<Column | null> {

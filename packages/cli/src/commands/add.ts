@@ -6,7 +6,7 @@ import { outputError, outputSuccess } from "../lib/json-output.js";
 export const addCommand = new Command("add")
   .description("Add a new task")
   .argument("<title>", "Task title")
-  .option("-c, --column <column>", "Column to add task to")
+  .option("-c, --column <column>", "Column to add task to (default: configured default column)")
   .option("-a, --agent <agent>", "Agent creating the task")
   .option("-D, --description <text>", "Task description")
   .option("-d, --depends-on <ids>", "Comma-separated task IDs this depends on")
@@ -43,7 +43,10 @@ export const addCommand = new Command("add")
         process.exit(1);
       }
 
-      const task = result.task!;
+      const task = result.task;
+      if (!task) {
+        throw new KabanError("Task was not created", 1);
+      }
 
       if (json) {
         outputSuccess(task);

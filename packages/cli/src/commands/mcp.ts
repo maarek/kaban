@@ -115,7 +115,7 @@ async function startMcpServer(workingDirectory: string) {
           properties: {
             title: { type: "string", description: "Task title (1-200 chars)" },
             description: { type: "string", description: "Task description" },
-            columnId: { type: "string", description: "Column ID (default: todo)" },
+            columnId: { type: "string", description: "Column ID (default: configured default)" },
             agent: { type: "string", description: "Agent name creating the task" },
             dependsOn: {
               type: "array",
@@ -270,7 +270,7 @@ async function startMcpServer(workingDirectory: string) {
           properties: {
             id: { type: "string", description: "Task ID to restore" },
             taskId: { type: "string", description: "Task ID - alias for id" },
-            columnId: { type: "string", description: "Target column (default: todo)" },
+            columnId: { type: "string", description: "Target column (default: original column)" },
           },
         },
       },
@@ -348,7 +348,7 @@ async function startMcpServer(workingDirectory: string) {
           properties: {
             title: { type: "string", description: "Task title" },
             description: { type: "string", description: "Task description" },
-            columnId: { type: "string", description: "Target column (default: todo)" },
+            columnId: { type: "string", description: "Target column (default: configured default)" },
             createdBy: { type: "string", description: "Creator: user, claude, etc." },
             agent: { type: "string", description: "Creator (deprecated, use createdBy)" },
             assignedTo: { type: "string", description: "Assignee" },
@@ -420,7 +420,7 @@ async function startMcpServer(workingDirectory: string) {
         inputSchema: {
           type: "object",
           properties: {
-            columnId: { type: "string", description: "Filter by column (default: todo)" },
+            columnId: { type: "string", description: "Filter by column (default: configured default)" },
           },
         },
       },
@@ -533,7 +533,7 @@ async function startMcpServer(workingDirectory: string) {
         });
       }
 
-      const { taskService, boardService, linkService, markdownService, scoringService } =
+      const { config, taskService, boardService, linkService, markdownService, scoringService } =
         await createContext(workingDirectory);
 
       const taskArgs = args as Record<string, unknown> | undefined;
@@ -546,7 +546,11 @@ async function startMcpServer(workingDirectory: string) {
           if (typeof title !== "string" || !title.trim()) {
             return errorResponse("Title required (non-empty string)");
           }
-          const task = await taskService.addTask(args as Parameters<typeof taskService.addTask>[0]);
+          const columnId = getParam(addArgs, "columnId", "column") ?? config.defaults.column;
+          const task = await taskService.addTask({
+            ...(args as Parameters<typeof taskService.addTask>[0]),
+            columnId,
+          });
           return jsonResponse(task);
         }
         case "kaban_get_task": {
@@ -784,8 +788,12 @@ async function startMcpServer(workingDirectory: string) {
             force?: boolean;
             [key: string]: unknown;
           };
+          const columnId = getParam(taskInput, "columnId", "column") ?? config.defaults.column;
           const result = await taskService.addTaskChecked(
-            taskInput as Parameters<typeof taskService.addTask>[0],
+            {
+              ...(taskInput as Parameters<typeof taskService.addTask>[0]),
+              columnId,
+            },
             { force },
           );
           return jsonResponse(result);
@@ -832,7 +840,9 @@ async function startMcpServer(workingDirectory: string) {
         }
         case "kaban_get_next_task": {
           const { columnId } = (args ?? {}) as { columnId?: string };
-          const allTasks = await taskService.listTasks({ columnId: columnId ?? "todo" });
+          const allTasks = await taskService.listTasks({
+            columnId: columnId ?? config.defaults.column,
+          });
           const unblockedTasks = allTasks.filter((t) => !t.blockedReason && t.dependsOn.length === 0);
           if (unblockedTasks.length === 0) {
             return jsonResponse({ message: "No actionable tasks found", task: null });

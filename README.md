@@ -194,6 +194,9 @@ kaban <command> [options]
 | `kaban assign <id> [agent]` | Assign/unassign a task |
 | `kaban done <id>` | Mark task complete |
 | `kaban status` | Show board summary |
+| `kaban columns list` | List board columns, task counts, WIP limits, and terminal status |
+| `kaban columns add <id> <name>` | Add a board column |
+| `kaban columns rename\|move\|update\|delete` | Manage existing board columns |
 | `kaban search <query>` | Full-text search in archive |
 | `kaban archive` | Archive completed tasks |
 | `kaban restore <id>` | Restore task from archive |
@@ -215,13 +218,32 @@ kaban init --name "Sprint 1"
 kaban add "Fix auth bug" -c todo -a claude -D "OAuth2 flow broken"
 
 # List tasks in a column
-kaban list --column in-progress
+kaban list --column in_progress
 
 # Move task to next column
 kaban move abc123 --next
 
 # Move and assign to agent in one command
-kaban move abc123 in-progress --assign claude
+kaban move abc123 in_progress --assign claude
+
+# List board columns with task counts
+kaban columns list
+
+# Add a QA column before done with a WIP limit
+kaban columns add qa "QA" --before done --wip-limit 2
+
+# Rename a column without changing its stable ID
+kaban columns rename todo "Ready"
+
+# Move a column in the board order
+kaban columns move review --after qa
+
+# Mark a column as terminal or clear a WIP limit
+kaban columns update done --terminal
+kaban columns update qa --clear-wip-limit
+
+# Delete an empty column
+kaban columns delete qa
 
 # Assign task to an agent
 kaban assign abc123 claude
@@ -408,13 +430,21 @@ Kaban stores data in `.kaban/` directory:
 
 ### Default Columns
 
-| Column | WIP Limit |
-|--------|-----------|
-| Backlog | — |
-| To Do | — |
-| In Progress | 3 |
-| Review | 2 |
-| Done | — (terminal) |
+Boards start with these columns:
+
+| ID | Name | WIP Limit | Terminal |
+|----|------|-----------|----------|
+| `backlog` | Backlog | none | no |
+| `todo` | Todo | none | no |
+| `in_progress` | In Progress | 3 | no |
+| `review` | Review | 2 | no |
+| `done` | Done | none | yes |
+
+Columns can be managed with `kaban columns`. The column ID is the stable value stored on tasks and used by CLI/MCP commands; the display name can be renamed without changing task data. `kaban columns list` shows each column's current task count, order, WIP limit, and terminal status.
+
+`.kaban/config.json` stores the ordered column configuration and `defaults.column`. The default column is used when commands such as `kaban add`, `kaban next`, and MCP task creation do not receive an explicit column. If you delete the configured default column, Kaban chooses the first remaining non-terminal column as the new default.
+
+WIP limits are advisory workflow limits enforced by task movement unless bypassed with the relevant force option. Terminal columns represent completed work; deleting or unmarking the only terminal column is rejected.
 
 ## Contributing
 
